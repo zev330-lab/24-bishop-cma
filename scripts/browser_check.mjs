@@ -97,6 +97,28 @@ async function overflow(page) {
   const ov = await overflow(page);
   check('no horizontal overflow @1280', ov.over <= 1, `scrollW ${ov.scrollW} vs clientW ${ov.clientW}`);
 
+  // Comparable-pool filters: exact regression for the iPhone screenshot that
+  // showed em dashes and inert controls. Hosted JavaScript must initialize the
+  // default set, then recompute every headline and row after a filter click.
+  const poolDefault = await page.evaluate(() => ({
+    n: document.querySelector('#s-n')?.textContent,
+    med: document.querySelector('#s-med')?.textContent,
+    psf: document.querySelector('#s-psf')?.textContent,
+    rat: document.querySelector('#s-rat')?.textContent,
+    rows: document.querySelectorAll('#pooltable tbody tr').length,
+  }));
+  check('comp pool initializes without em dashes', poolDefault.n === '20' && poolDefault.med === '$802,500' && poolDefault.psf === '$462' && poolDefault.rat === '1.188×', JSON.stringify(poolDefault));
+  check('comp pool default row count matches headline', poolDefault.rows === 20, `${poolDefault.rows} rows`);
+  await page.click('#f-rad button[data-v="0.6"]');
+  await page.waitForTimeout(100);
+  const poolNarrow = await page.evaluate(() => ({
+    n: document.querySelector('#s-n')?.textContent,
+    med: document.querySelector('#s-med')?.textContent,
+    rows: document.querySelectorAll('#pooltable tbody tr').length,
+  }));
+  check('distance filter recomputes metrics and rows', poolNarrow.n === '6' && poolNarrow.med === '$822,500' && poolNarrow.rows === 6, JSON.stringify(poolNarrow));
+  await page.click('#f-rad button[data-v="1.6"]');
+
   // condition toggle re-renders the estimate
   await page.click('#condtoggle button[data-state="fixed"]');
   await page.waitForTimeout(200);
@@ -176,6 +198,25 @@ async function overflow(page) {
   const smooth = await page.evaluate(() => getComputedStyle(document.documentElement).scrollBehavior);
   check('reduced-motion disables smooth scroll', smooth === 'auto', 'scroll-behavior=' + smooth);
   check('no console/page errors @reduced-motion', errors.length === 0, errors.slice(0, 4).join(' | '));
+  await ctx.close();
+}
+
+/* ---------- JavaScript-disabled / iPhone attachment fallback ---------- */
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, javaScriptEnabled: false });
+  const page = await ctx.newPage();
+  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const fallback = await page.evaluate(() => ({
+    n: document.querySelector('#s-n')?.textContent,
+    med: document.querySelector('#s-med')?.textContent,
+    rows: document.querySelectorAll('#pooltable tbody tr').length,
+    note: document.querySelector('noscript')?.textContent || '',
+    liveHref: document.querySelector('noscript a')?.href || '',
+  }));
+  check('no-script view shows useful default summary figures', fallback.n === '20' && fallback.med === '$802,500', JSON.stringify(fallback));
+  check('no-script view does not imply the detailed table is available', fallback.rows === 0 && fallback.note.includes('detailed comp table'), JSON.stringify(fallback));
+  check('no-script view explains hosted-link requirement', fallback.note.includes('iPhone attachment previews'), fallback.note.trim());
+  check('no-script live link is canonical', fallback.liveHref === 'https://zev330-lab.github.io/24-bishop-cma/', fallback.liveHref);
   await ctx.close();
 }
 
